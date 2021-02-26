@@ -13,16 +13,11 @@ import numpy as np
 
 dtype = torch.FloatTensor
 IMG_DIM=28
+NOISE_DIM=50
 
 plt.rcParams['figure.figsize'] = (10.0, 8.0) # set default size of plots
 plt.rcParams['image.interpolation'] = 'nearest'
 plt.rcParams['image.cmap'] = 'gray'
-
-def g_wloss(scores_fake):
-    return -scores_fake.mean()
-
-def d_wloss(scores_real, scores_fake):
-    return scores_fake.mean() - scores_real.mean()
 
 def g_bceloss(scores_fake):
     return nn.BCEWithLogitsLoss()(scores_fake, torch.ones(scores_fake.shape[0]).float().unsqueeze(-1))
@@ -33,34 +28,6 @@ def d_bceloss(D, realx, fakex, y):
     fake_scores = D(fakex, y)
     return nn.BCEWithLogitsLoss()(real_scores, torch.ones(N).float().unsqueeze(-1)) \
         + nn.BCEWithLogitsLoss()(fake_scores, torch.zeros(N).float().unsqueeze(-1))
-
-def d_gpwloss(D, realx, fakex, y, lambd=10):
-    gp = compute_gradient_penalty(D, realx, fakex, y)
-    real_scores = D(realx, y)
-    fake_scores = D(fakex, y)
-    return fake_scores.mean() - real_scores.mean() + lambd * gp
-
-def compute_gradient_penalty(D, real_samples, fake_samples, y):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    # Random weight term for interpolation between real and fake samples
-    alpha = torch.Tensor(np.random.random((real_samples.size(0), 1, 1, 1)))
-    # Get random interpolation between real and fake samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    d_interpolates = D(interpolates, y)
-    with torch.no_grad():
-        fake = torch.Tensor(real_samples.shape[0], 1).fill_(1.0)
-    # Get gradient w.r.t. interpolates
-    gradients = torch.autograd.grad(
-        outputs=d_interpolates,
-        inputs=interpolates,
-        grad_outputs=fake,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True,
-    )[0]
-    gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
 
 def noise(batch_size, noise_dim):
     return torch.rand((batch_size, noise_dim)) * 2 - 1
@@ -77,7 +44,6 @@ class GAN:
         self.batch_size = kwargs.get("batch_size", 128)
         self.img_size = kwargs.get("img_size", 28)
         self.noise_dim = kwargs.get("noise_dim", 50)
-        self.clip = kwargs.get("clip", None)
         self.n_classes = kwargs.get("n_classes", None)
         self.d_optim = kwargs.get("d_optim",
                                   lambda params: torch.optim.Adam(params, lr=0.0002, betas=(0.5, 1 - 1e-3)))(
@@ -107,30 +73,8 @@ class GAN:
         N = 49
         labels = (torch.ones(7,7)*(torch.arange(7).unsqueeze(-1))).type(torch.long)
         with torch.no_grad():
-            fake_imgs = net(N, labels.view(-1))
-        self.show_images(fake_imgs.squeeze())
-
-
-    def interpolate_samples(self, model_path):
-        net = torch.load(model_path)
-        net.eval()
-        N = 4
-        w = 6
-        noise_dim = 50
-        while True:
-            z = noise(N, noise_dim)
-            zs = np.zeros((w+1, w+1, noise_dim))
-            zs[0] = np.linspace(z[0], z[1], w+1)
-            zs[w] = np.linspace(z[2], z[3], w+1)
-            for i in range(w+1):
-                zs[:,i] = np.linspace(zs[0,i], zs[w,i], w+1)
-            zs = torch.from_numpy(zs).view((w+1)**2, noise_dim).type(torch.float32)
-            # inter_z = torch.stack([z[0] + diff * i for i in range(w+1)])
-            with torch.no_grad():
-                original = net(z, torch.Tensor([0]))
-                interpolated = net(zs, torch.Tensor([0]))
-            self.show_images(interpolated.squeeze())
-
+            fake_imgs = net(noise(N,NOISE_DIM), labels.view(-1))
+        self.show_images(fake_imgs.squeeze(), "samples")
 
 
     def train(self, name):
@@ -182,8 +126,8 @@ class GAN:
         print(f"Epoch {counter}: D loss: {d_loss}  g loss: {g_loss}")
         fake_images = fake_images.data.cpu().numpy().reshape(-1, self.img_size, self.img_size)
         self.show_images(fake_images, f"{name}_imgs_step_{counter}.png")
-        torch.save(self.discriminator, f"discriminator_{counter}")
-        torch.save(self.generator, f"generator_{counter}")
+        torch.save(self.discriminator, f"models/discriminator_{counter}")
+        torch.save(self.generator, f"models/generator_{counter}")
 
 
     def show_images(self, images,filename=None, max_imgs=50):
@@ -208,44 +152,36 @@ class GAN:
 
 
 if __name__ == "__main__":
-    # G = VanillaGenerator(24, 1024, 784)
-    # D = VanillaDiscriminator(784, 256)
-    #
-    g_params = {"noise_dim": 50,
+    g_params = {"noise_dim": NOISE_DIM,
+                "img_dim": IMG_DIM,
                 "hidden_dim": 1024,
                 "num_conv1": 128,
                 "size_conv1": 4,
                 "num_conv2": 64,
                 "size_conv2": 4,
-                "img_dim": IMG_DIM,
-                # "n_classes": 10,
-                # "label_emb_dim": 50
+                "n_classes": 10,
+                "label_emb_dim": 50
                 }
     d_params = {"img_dim": IMG_DIM,
                 "num_conv1": 32,
                 "size_conv1": 5,
                 "num_conv2": 64,
                 "size_conv2": 5,
-                # "n_classes": 10,
-                # "label_emb_dim": 50
+                "n_classes": 10,
+                "label_emb_dim": 50
                 }
-    train_params = {"img_size": IMG_DIM,
+    train_params = {"noise_dim": NOISE_DIM,
+                    "img_size": IMG_DIM,
                     "batch_size": 128,
                     "d_overtrain": 3,
                     "n_classes": 10,
-                    "noise_dim": 50,
-                    "d_loss": d_gpwloss,
-                    "g_loss": g_wloss,
-                    # "clip": 0.01,
-                    # "d_optim": lambda params: torch.optim.RMSprop(params, lr=0.00005),
-                    # "g_optim": lambda params: torch.optim.RMSprop(params, lr=0.00005)
+                    "d_loss": d_bceloss,
+                    "g_loss": g_bceloss
                     }
 
-    G = DCGenerator(**g_params)
-    D = DCDiscriminator(**d_params)
+    G = cDCGenerator(**g_params)
+    D = cDCDiscriminator(**d_params)
 
     gan = GAN(G, D, **train_params)
-    gan.train("WDCGAN")
-    # gan.sample_generator("generator_2399")
-    # gan.interpolate_samples("generator_2299")
-    # run_a_gan(D,G,gan.d_optim, gan.g_optim, gan.train_loader, discriminator_ce_loss, generator_ce_loss, gan)
+    # gan.train("cGAN")
+    gan.sample_generator("models/generator_4299")

@@ -3,47 +3,6 @@ import torch
 import torch.nn.functional as F
 
 
-class VanillaDiscriminator(nn.Module):
-    def __init__(self, in_dim, hidden_dim):
-        super().__init__()
-        self.fc1 = nn.Linear(in_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, 1)
-
-    def forward(self, x):
-        x = nn.Flatten()(x)
-        x = self.fc1(x)
-        x = F.leaky_relu(x, 0.01)
-        x = self.fc2(x)
-        x = F.leaky_relu(x, 0.2)
-        scores = self.fc3(x)
-        return scores
-
-class Generator(nn.Module):
-    def __init__(self, noise_dim):
-        super().__init__()
-        self.noise_dim = noise_dim
-
-
-
-class VanillaGenerator(Generator):
-    def __init__(self, noise_dim, hidden_dim, img_dim):
-        super().__init__(noise_dim)
-        self.fc1 = nn.Linear(noise_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, img_dim)
-
-
-    def forward(self, batch_size):
-        z = self.noise(batch_size)
-        x = self.fc1(z)
-        x = nn.ReLU()(x)
-        x = self.fc2(x)
-        x = torch.relu(x)
-        x = self.fc3(x)
-        x = torch.tanh(x)
-        return x
-
 class DCDiscriminator(nn.Module):
 
     def __init__(self, img_dim, num_conv1, size_conv1, num_conv2, size_conv2):
@@ -76,10 +35,10 @@ class DCDiscriminator(nn.Module):
         return x
 
 
-class DCGenerator(Generator):
+class DCGenerator(nn.Module):
 
     def __init__(self, noise_dim, hidden_dim, num_conv1, size_conv1, num_conv2, size_conv2, img_dim):
-        super().__init__(noise_dim)
+        super().__init__()
         self.conv2_in_w = 1 + (img_dim - size_conv2 + 2) // 2
         self.conv1_in_w = 1 + (self.conv2_in_w - size_conv1 + 2) // 2
         self.fc2_in = self.conv1_in_w * self.conv1_in_w * num_conv1
@@ -154,8 +113,9 @@ class cDCDiscriminator(DCDiscriminator):
 
 
 class cDCGenerator(DCGenerator):
-    def __init__(self, noise_dim, num_conv1, size_conv1, num_conv2, size_conv2, img_dim, label_emb_dim, n_classes):
-        super().__init__(noise_dim, num_conv1, size_conv1, num_conv2, size_conv2, img_dim)
+    def __init__(self, noise_dim, hidden_dim, num_conv1, size_conv1, num_conv2, size_conv2, img_dim, label_emb_dim,
+                 n_classes):
+        super().__init__(noise_dim, hidden_dim, num_conv1, size_conv1, num_conv2, size_conv2, img_dim)
         self.label_emb_dim = label_emb_dim
         self.n_classes = n_classes
         self.emb = nn.Embedding(self.n_classes, self.label_emb_dim)
@@ -186,52 +146,3 @@ class cDCGenerator(DCGenerator):
 
         return x
 
-
-class CycleGanGenerator(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Conv2d(1, 32, 5),
-            nn.LeakyReLU(0.2),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 64, 5, 1),
-            nn.LeakyReLU(0.2),
-            nn.MaxPool2d(2, 2),
-            Flatten(),
-            nn.Linear(64 * 4 * 4, 4 * 4 * 64),
-            nn.LeakyReLU(0.2),
-            nn.BatchNorm1d(1024),
-            nn.Linear(1024, 7 * 7 * 128),
-            nn.ReLU(),
-            nn.BatchNorm1d(7 * 7 * 128),
-            Unflatten(-1, 128, 7, 7),
-            nn.ConvTranspose2d(128, 64, 4, 2, 1),
-            nn.ReLU(),
-            nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(64, 1, 4, 2, 1),
-            nn.Tanh(),
-        )
-
-
-    def forward(self, img):
-        return self.model(img)
-
-
-class Flatten(nn.Module):
-    def forward(self, x):
-        N, C, H, W = x.size() # read in N, C, H, W
-        return x.view(N, -1)  # "flatten" the C * H * W values into a single vector per image
-
-class Unflatten(nn.Module):
-    """
-    An Unflatten module receives an input of shape (N, C*H*W) and reshapes it
-    to produce an output of shape (N, C, H, W).
-    """
-    def __init__(self, N=-1, C=128, H=7, W=7):
-        super(Unflatten, self).__init__()
-        self.N = N
-        self.C = C
-        self.H = H
-        self.W = W
-    def forward(self, x):
-        return x.view(self.N, self.C, self.H, self.W)
